@@ -4,6 +4,11 @@ import streamlit as st
 PRIMARY = "#A05AFF"
 BG_DARK = "#0f172a"
 
+st.set_page_config(
+    layout="wide",
+    page_title="Data Science Portfolio HomePage",
+    page_icon="🏠",
+)
 
 st.markdown(
     f"""

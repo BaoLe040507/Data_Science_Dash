@@ -5,7 +5,16 @@ import plotly.express as px
 import numpy as np
 
 PRIMARY = "#A05AFF"
+SECONDARY = "#FE9496"
+TERTIARY = "#4BCBEB"
 BG_DARK = "#0f172a"
+
+# page config
+st.set_page_config(
+    layout="wide",
+    page_title="Stocks and Market Dashboard",
+    page_icon="📈",
+)
 
 # Custom CSS to match home page styling
 st.markdown(
@@ -63,13 +72,17 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3 = st.tabs(["📊 Stock Analysis", "➕ Add Position", "🔄 Update Prices"])
+
+
+tab1, tab2, tab3 = st.tabs(["📊 Stock and Market Analysis", "➕ Add Position", "🔄 Update Prices"])
 with tab1:
     st.markdown(f'<h3 class="section-header">Individual Stock Analysis</h3>', unsafe_allow_html=True)
     col_1, col_2 = st.columns([1, 3], border=True)
     with col_1:
         stocks = Helpers.get_all_stocks()
-        stock_options = pd.DataFrame(stocks)['symbol'].tolist()
+
+        stock_options = pd.DataFrame(stocks)[['symbol','is_benchmark']]
+        stock_options = stock_options[stock_options['is_benchmark'] == False]['symbol'].tolist()
 
         selected_stocks = st.multiselect("Select stocks to analyze:", stock_options)
 
@@ -85,10 +98,7 @@ with tab1:
             days = int(time_period.replace("year", "")) * 365
         # return results of selected stocks
         if len(selected_stocks) >= 1:
-            stock_history = Helpers.get_stock_price_history(selected_stocks, days=days)[["stock_id","price_date","close_price"]]
-
-            # merge stock history with symbols for multiple stocks
-            stock_history = pd.merge(stock_history, pd.DataFrame(stocks)[["id","symbol"]], left_on="stock_id", right_on="id", how="left")
+            stock_history = Helpers.get_stock_price_history(selected_stocks, days=days)
 
             stock_history = stock_history[["symbol","price_date","close_price"]]
 
@@ -117,10 +127,75 @@ with tab1:
             fig.update_traces(line=dict(width=2))
             fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
             fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='content')
+
             
         else:
             st.info("Please select at least one stock to analyze.")
+    st.divider()
+    st.markdown(f'<h3 class="section-header">What\'s Happening in the Market?</h3>', unsafe_allow_html=True)
+    
+    # time period
+    period = st.selectbox("Select time period for market analysis:", ["1 day", "5 day", "1 month", "3 month", "6 month", "1 year"], index=2)
+    
+    if "week" in period:
+        days = 7
+    elif "month" in period:
+        days = int(period.replace("month", "")) * 30
+    elif "year" in period:
+        days = int(period.replace("year", "")) * 365
+    elif "day" in period:
+        days = int(period.replace(" day", ""))
+
+    # Get stock history for all indices
+    history = Helpers.get_stock_price_history(["^GSPC", "^DJI", "^IXIC"], days=days)
+    stock_history = history[["symbol","price_date","close_price"]]
+
+    # Market indices configuration
+    indices = [
+        {"symbol": "^GSPC", "name": "S&P 500", "color": PRIMARY, "badge_color": "violet", 
+         "description": "Tracks 500 largest U.S. companies across all sectors"},
+        {"symbol": "^DJI", "name": "Dow Jones", "color": SECONDARY, "badge_color": "red",
+         "description": "30 major U.S. blue-chip companies (industrials, tech, finance)"},
+        {"symbol": "^IXIC", "name": "NASDAQ", "color": TERTIARY, "badge_color": "blue",
+         "description": "3,000+ tech-heavy companies including Apple, Microsoft, Tesla"}
+    ]
+
+    cols = st.columns([1, 1, 1], border=True)
+    
+    for idx, index_info in enumerate(indices):
+        with cols[idx]:
+            st.badge(index_info["name"], color=index_info["badge_color"])
+            st.caption(index_info["description"])
+            
+            # Filter history for this index
+            index_history = stock_history[stock_history["symbol"] == index_info["symbol"]]
+            
+            # Create and style chart
+            fig = px.line(index_history, x="price_date", y="close_price", color_discrete_sequence=[index_info["color"]])
+            fig.update_layout(
+                xaxis_title='Date',
+                yaxis_title='Price',
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),
+                legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
+            )
+
+
+            # Calculate and display metric with percentage change over the selected period
+            live_price = Helpers.get_current_live_price(index_info["symbol"])
+            if live_price and not index_history.empty:
+                current_price = round(live_price['current_price'], 2)
+                first_price = index_history['close_price'].iloc[0]  # First price in the period
+                pct_change = np.round((current_price - first_price) / first_price * 100, 2)
+                st.metric(label=f"{index_info['name']} Current Value", value=current_price, delta=f"{pct_change}%")
+            else:
+                st.metric(label=f"{index_info['name']} Current Value", value="N/A")
+            
+            st.plotly_chart(fig, width='content')
+
 with tab2:
     # Initialize session state for login
     if "logged_in" not in st.session_state:
@@ -153,6 +228,7 @@ with tab2:
             
             with st.form("Add Stock Form"):
                 stock_symbol = st.text_input("Stock Symbol", key="stock_symbol")
+                benchmark = st.checkbox("Is Benchmark Stock?", value=False)
                 submit_button = st.form_submit_button("Add Stock")
                 
                 if submit_button:
@@ -160,7 +236,7 @@ with tab2:
                         st.error("Please enter a stock symbol.")
                     else:
                         try:
-                            Helpers.add_stock_to_db(stock_symbol)
+                            Helpers.add_stock_to_db(stock_symbol, benchmark)
                             st.session_state["success_message"] = f"Added stock: {stock_symbol} into the database!"
                             st.session_state["clear_stock_input"] = True  # Flag to clear on next run
                             st.rerun()

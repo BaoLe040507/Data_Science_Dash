@@ -55,6 +55,10 @@ def add_stock_to_db(symbol, is_benchmark=False):
     
     supabase.table('stocks').upsert(stock_data, on_conflict='symbol').execute()
 
+    get_all_stocks.clear()
+    get_stock_id.clear()
+
+@st.cache_data(ttl='10m')
 def get_stock_id(symbol):
     """Helper: Get stock_id from symbol"""
     result = supabase.table('stocks').select('id').eq('symbol', symbol).execute()
@@ -81,8 +85,7 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
         # Explicit period (e.g., "10y" for initial load)
         st.info(f"Fetching {period} of historical data for {symbol} at {interval} interval")
         hist = yf.Ticker(symbol).history(period=period, interval=interval)
-    else:
-        # Smart update: only fetch new data
+    else: # Smart update: only fetch new data
         last_price = supabase.table('stock_prices')\
             .select('price_date')\
             .eq('stock_id', stock_id)\
@@ -135,9 +138,14 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
         st.success(f"✅ Updated {len(prices)} price records for {symbol}")
         return result.data
     
+    # Clear cache
+    get_latest_price_from_db.clear()
+    get_stock_price_history.clear()
+    get_current_positions.clear()
+
     return None
 
-
+@st.cache_data(ttl='5m')
 def get_latest_price_from_db(symbol):
     """
     STEP 3a: Get most recent price from database (fast, cached)
@@ -156,7 +164,7 @@ def get_latest_price_from_db(symbol):
     
     return latest.data[0] if latest.data else None
 
-
+@st.cache_data(ttl='5m')
 def get_current_live_price(symbol):
     """
     STEP 3b: Get current live price from Yahoo Finance
@@ -179,6 +187,7 @@ def get_current_live_price(symbol):
     }
 
 
+@st.cache_data(ttl='5m')
 def get_price_comparison(symbol):
     """
     STEP 3c: Compare latest DB price vs current live price
@@ -211,12 +220,13 @@ def get_price_comparison(symbol):
     
     return result
 
-
+@st.cache_data(ttl='10m')
 def get_all_stocks():
     """Get all stocks from database"""
     return supabase.table('stocks').select('*').execute().data
 
 
+@st.cache_data(ttl='10m')
 def get_stock_price_history(symbols, days=30):
     """
     STEP 4: Get historical prices for charting
@@ -234,15 +244,33 @@ def get_stock_price_history(symbols, days=30):
         if not stock_id:
             continue
 
-        prices = supabase.table('stock_prices')\
-            .select('stock_id, price_date, close_price')\
-            .eq('stock_id', stock_id)\
-            .gte('price_date', start_date)\
-            .order('price_date', desc=False)\
-            .execute()
-
-        if prices.data:
-            df = pd.DataFrame(prices.data)
+        # Fetch all records using pagination to avoid limits
+        all_prices = []
+        page_size = 1000
+        offset = 0
+        
+        while True:
+            prices = supabase.table('stock_prices')\
+                .select('stock_id, price_date, close_price')\
+                .eq('stock_id', stock_id)\
+                .gte('price_date', start_date)\
+                .order('price_date', desc=False)\
+                .range(offset, offset + page_size - 1)\
+                .execute()
+            
+            if not prices.data:
+                break
+                
+            all_prices.extend(prices.data)
+            
+            # If we got less than page_size records, we've reached the end
+            if len(prices.data) < page_size:
+                break
+                
+            offset += page_size
+        
+        if all_prices:
+            df = pd.DataFrame(all_prices)
             df["symbol"] = symbol
             histories.append(df)
 
@@ -275,8 +303,13 @@ def record_transaction(symbol, transaction_type, quantity, price, transaction_da
     
     result = supabase.table('transactions').insert(transaction).execute()
     st.success(f"✅ Recorded {transaction_type} of {quantity} shares of {symbol}")
+    
+    # Clear cache
+    get_current_positions.clear()
+
     return result.data[0] if result.data else None
 
+@st.cache_data(ttl='5m')
 def get_current_positions():
     """
     Calculate current positions from all transactions
