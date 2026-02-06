@@ -30,6 +30,18 @@ def get_supabase_client():
 supabase = get_supabase_client()
 
 
+def _clean_numeric(value):
+    """Normalize numeric values coming from Yahoo Finance info payloads."""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, float) and np.isnan(value):
+            return None
+        return float(value)
+    except Exception:
+        return None
+
+
 def navigation_menu():
     with ui.fab('menu', label='Navigation',color='#A05AFF').classes('text-white'):
         ui.fab_action('home', on_click=lambda: ui.navigate.to('/'),color='#A05AFF')
@@ -70,6 +82,55 @@ def get_stock_id(symbol):
     result = supabase.table('stocks').select('id').eq('symbol', symbol).execute()
     return result.data[0]['id'] if result.data else None
 
+def update_stock_financials(ticker, stock_id, symbol):
+    """Upsert a concise set of financial and rating fields from Yahoo Finance."""
+    if supabase is None:
+        st.error("Cannot write financials because Supabase connection failed.")
+        return None
+
+    try:
+        info = ticker.info
+    except Exception as e:
+        st.warning(f"Could not fetch financials for {symbol}: {e}")
+        return None
+
+    if not info:
+        st.warning(f"No financial data returned for {symbol}")
+        return None
+
+    financial_record = {
+        'stock_id': stock_id,
+        'currency': info.get('currency'),
+        'market_cap': _clean_numeric(info.get('marketCap')),
+        'trailing_pe': _clean_numeric(info.get('trailingPE')),
+        'forward_pe': _clean_numeric(info.get('forwardPE')),
+        'peg_ratio': _clean_numeric(info.get('pegRatio')),
+        'eps_ttm': _clean_numeric(info.get('trailingEps')),
+        'dividend_rate': _clean_numeric(info.get('dividendRate')),
+        'dividend_yield': _clean_numeric(info.get('dividendYield')),
+        'payout_ratio': _clean_numeric(info.get('payoutRatio')),
+        'beta': _clean_numeric(info.get('beta')),
+        'fifty_two_week_high': _clean_numeric(info.get('fiftyTwoWeekHigh')),
+        'fifty_two_week_low': _clean_numeric(info.get('fiftyTwoWeekLow')),
+        'fifty_day_average': _clean_numeric(info.get('fiftyDayAverage')),
+        'two_hundred_day_average': _clean_numeric(info.get('twoHundredDayAverage')),
+        'target_mean_price': _clean_numeric(info.get('targetMeanPrice')),
+        'target_high_price': _clean_numeric(info.get('targetHighPrice')),
+        'target_low_price': _clean_numeric(info.get('targetLowPrice')),
+        'recommendation_key': info.get('recommendationKey'),
+        'recommendation_mean': _clean_numeric(info.get('recommendationMean')),
+        'last_updated_at': datetime.now().isoformat(),
+        'as_of_date': datetime.now().date().isoformat(),
+    }
+
+    result = supabase.table('stock_financials').upsert(
+        financial_record,
+        on_conflict='stock_id'
+    ).execute()
+
+    get_financials.clear()
+    return result.data[0] if result.data else None
+
 def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False):
     """
     STEP 2: Fetch and store price data from Yahoo Finance
@@ -85,12 +146,14 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
     stock_id = get_stock_id(symbol)
     if not stock_id:
         raise ValueError(f"Stock {symbol} not found. Add it first with add_stock_to_db()")
+
+    ticker = yf.Ticker(symbol)
     
     # Determine what data to fetch
     if period:
         # Explicit period (e.g., "10y" for initial load)
         st.info(f"Fetching {period} of historical data for {symbol} at {interval} interval")
-        hist = yf.Ticker(symbol).history(period=period, interval=interval)
+        hist = ticker.history(period=period, interval=interval)
     else: # Smart update: only fetch new data
         last_price = supabase.table('stock_prices')\
             .select('price_date')\
@@ -111,11 +174,11 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
             # Fetch from last update to now
             start_date = (last_date - timedelta(days=1)).strftime('%Y-%m-%d')
             st.info(f"Fetching new data for {symbol} from {start_date} at {interval} interval")
-            hist = yf.Ticker(symbol).history(start=start_date, interval=interval)
+            hist = ticker.history(start=start_date, interval=interval)
         else:
             # No data exists, fetch 1 year default
             st.info(f"No data found for {symbol}, fetching 1 year at {interval} interval")
-            hist = yf.Ticker(symbol).history(period="1y", interval=interval)
+            hist = ticker.history(period="1y", interval=interval)
     
     if hist.empty:
         st.warning(f"No data returned for {symbol}")
@@ -124,6 +187,9 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
     # Prepare batch insert
     prices = []
     for date, row in hist.iterrows():
+        # Some symbols (futures, indices) don't have 'Adj Close', fall back to 'Close'
+        adj_close = row.get('Adj Close', row.get('Close'))
+        
         prices.append({
             'stock_id': stock_id,
             'price_date': date.date().isoformat(),
@@ -131,7 +197,7 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
             'high_price': float(row['High']),
             'low_price': float(row['Low']),
             'close_price': float(row['Close']),
-            'adjusted_close': float(row['Adj Close']),
+            'adjusted_close': float(adj_close),
             'volume': int(row['Volume'])
         })
     
@@ -142,14 +208,37 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
             on_conflict='stock_id,price_date'
         ).execute()
         st.success(f"✅ Updated {len(prices)} price records for {symbol}")
+        update_stock_financials(ticker, stock_id, symbol)
+        get_latest_price_from_db.clear()
+        get_stock_price_history.clear()
+        get_current_positions.clear()
         return result.data
     
+    # Also Update financials even if no new prices
+    update_stock_financials(ticker, stock_id, symbol)
+
     # Clear cache
     get_latest_price_from_db.clear()
     get_stock_price_history.clear()
     get_current_positions.clear()
 
     return None
+
+@st.cache_data(ttl='5m')
+def get_financials(symbol):
+    """Fetch the most recent stored financial snapshot for a symbol."""
+    stock_id = get_stock_id(symbol)
+    if not stock_id:
+        return None
+
+    record = supabase.table('stock_financials')\
+        .select('*')\
+        .eq('stock_id', stock_id)\
+        .order('last_updated_at', desc=True)\
+        .limit(1)\
+        .execute()
+
+    return record.data[0] if record.data else None
 
 @st.cache_data(ttl='5m')
 def get_latest_price_from_db(symbol):

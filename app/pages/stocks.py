@@ -86,7 +86,7 @@ tab1, tab2, tab3 = st.tabs(["📊 Stock and Market Analysis", "➕ Add Position"
 with tab1:
     st.markdown(f'<h3 class="section-header">Stock Analysis</h3>', unsafe_allow_html=True)
     st.caption("Compare selected stocks' performance over time. Use 'Actual Price' for raw values or 'Normalized Price' to start all stocks at 100% for relative growth comparison.")
-    col_1, col_2 = st.columns([1, 3], border=True)
+    col_1, col_2, col_3 = st.columns([0.5, 1.5, 2], border=True)
     with col_1:
         stocks = Helpers.get_all_stocks()
 
@@ -98,6 +98,7 @@ with tab1:
         price_adjustment = st.selectbox("Price Adjustment:", ["Actual Price", "Normalized Price"], index=0)
         time_period = st.selectbox("Select time period:", ["1 week", "1 month", "3 month", "6 month", "1 year", "2 year", "5 year", "10 year", "15 year"], index=7)
     with col_2:
+        st.markdown("#### Stock Price History")
         # get the time period in days
         if "week" in time_period:
             days = 7
@@ -140,6 +141,108 @@ with tab1:
             
         else:
             st.info("Please select at least one stock to analyze.")
+    with col_3:
+        st.markdown("#### Stock Financials Overview")
+        if len(selected_stocks) >= 1:
+            # Get financials for each selected stock
+            all_financials = []
+            for stock in selected_stocks:
+                financial_data = Helpers.get_financials(stock)
+                if financial_data:
+                    all_financials.append(financial_data)
+            
+            if all_financials:
+                stock_financials = pd.DataFrame(all_financials)
+
+                # join stock financials with stock info to get company names
+                stock_info = Helpers.get_all_stocks()
+                stock_info_df = pd.DataFrame(stock_info)[['id','symbol','company_name']]
+                stock_financials = stock_financials.merge(stock_info_df, left_on = 'stock_id', right_on= 'id', how='left')
+
+                # join live price data to get current price for each stock
+                current_prices_list = []
+                for stock in selected_stocks:
+                    price_data = Helpers.get_current_live_price(stock)
+                    if price_data:
+                        current_prices_list.append(price_data)
+                
+                if current_prices_list:
+                    current_prices_df = pd.DataFrame(current_prices_list)
+                    stock_financials = stock_financials.merge(current_prices_df, left_on='symbol', right_on='symbol', how='left')
+
+                # Select key columns for display
+                display_cols = ['symbol', 'market_cap', 'trailing_pe', 'forward_pe', 'eps_ttm', 'dividend_yield', 'beta', 'recommendation_key', 'current_price','target_mean_price']
+
+                stock_financials["market_cap"] = stock_financials["market_cap"].apply(lambda x: f"${x/1e9:.2f}B" if x >= 1e9 else (f"${x/1e6:.2f}M" if x >= 1e6 else f"${x:.2f}"))
+                # format large numbers and percentages
+                stock_financials["dividend_yield"] = stock_financials["dividend_yield"].astype(str) + "%"
+                # replace nan with 0 for dividend yield
+                stock_financials["dividend_yield"] = stock_financials["dividend_yield"].replace("nan%", "0%")
+
+                # round trailing PE, foward PE, and target mean price to 2 decimal places 
+                stock_financials["trailing_pe"] = stock_financials["trailing_pe"].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
+                stock_financials["forward_pe"] = stock_financials["forward_pe"].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
+                stock_financials["target_mean_price"] = stock_financials["target_mean_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
+                stock_financials["eps_ttm"] = stock_financials["eps_ttm"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
+                stock_financials["beta"] = stock_financials["beta"].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
+                stock_financials["current_price"] = stock_financials["current_price"].apply(lambda x: f"${x:.2f}" if pd.notnull(x) else "N/A")
+
+
+
+
+                # Format recommendation with better labels
+                recommendation_map = {
+                    'strong_buy': 'Strong Buy',
+                    'buy': 'Buy',
+                    'hold': 'Hold',
+                    'sell': 'Sell',
+                    'strong_sell': 'Strong Sell'
+                }
+                stock_financials['recommendation_key'] = stock_financials['recommendation_key'].map(
+                    lambda x: recommendation_map.get(x, x) if pd.notnull(x) else 'N/A'
+                )
+                
+                # Apply color styling to recommendation column
+                def color_recommendation(val):
+                    if val == 'Strong Buy':
+                        return 'background-color: #00a146; color: #0f172a; font-weight: bold'
+                    elif val == 'Buy':
+                        return 'background-color: #7FD8A6; color: #0f172a; font-weight: bold'
+                    elif val == 'Hold':
+                        return 'background-color: #FFD166; color: #0f172a; font-weight: bold'
+                    elif val == 'Sell':
+                        return 'background-color: #FE9496; color: #0f172a; font-weight: bold'
+                    elif val == 'Strong Sell':
+                        return 'background-color: #EF476F; color: white; font-weight: bold'
+                    else:
+                        return ''
+                
+                # Only show columns that exist in the data
+                display_cols = [col for col in display_cols if col in stock_financials.columns]
+                
+                # Apply styling and display
+                styled_df = stock_financials[display_cols].style.applymap(
+                    color_recommendation, 
+                    subset=['recommendation_key']
+                )
+                
+                st.dataframe(styled_df, use_container_width=True,
+                             column_config={
+                        "symbol": "Stock",
+                        "market_cap": "Market Cap",
+                        "trailing_pe": "Trailing P/E",
+                        "forward_pe": "Forward P/E",
+                        "eps_ttm": "EPS (TTM)",
+                        "dividend_yield": "Dividend Yield",
+                        "beta": "Beta",
+                        "recommendation_key": "Analyst Rec",
+                        "target_mean_price": "Avg. Target Price"
+                    }, hide_index=True
+                )
+            else:
+                st.warning("No financial data available. Try updating prices first.")
+        else:
+            st.info("Financial data will appear here once you select stocks to analyze.")
     st.divider()
     st.markdown(f'<h3 class="section-header">What\'s Happening in the Market?</h3>'
     , unsafe_allow_html=True)
