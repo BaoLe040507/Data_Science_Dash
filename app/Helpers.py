@@ -492,6 +492,7 @@ def plot_market_indices(stock_history, cols, indices, dashboard_colors):
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color='white'),
                 legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
+                height=300,  # Reduce chart height
             )
             fig.update_traces(line=dict(width=2))
             fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
