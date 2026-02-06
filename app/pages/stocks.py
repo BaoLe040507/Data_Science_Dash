@@ -7,7 +7,15 @@ import numpy as np
 PRIMARY = "#A05AFF"
 SECONDARY = "#FE9496"
 TERTIARY = "#4BCBEB"
+NEUTRAL_LIGHT = "#F5F3FA"  
+ACCENT_GREEN = "#4ED1A1"   
+ACCENT_YELLOW = "#FFD166" 
+ACCENT_RED = "#EF476F"     
+ACCENT_INDIGO = "#6C63FF"
 BG_DARK = "#0f172a"
+
+# Dashboard color palette for plots
+dashboard_colors = [PRIMARY, SECONDARY, TERTIARY, ACCENT_GREEN, ACCENT_YELLOW, ACCENT_RED, ACCENT_INDIGO]
 
 # page config
 st.set_page_config(
@@ -76,7 +84,8 @@ st.markdown(
 
 tab1, tab2, tab3 = st.tabs(["📊 Stock and Market Analysis", "➕ Add Position", "🔄 Update Prices"])
 with tab1:
-    st.markdown(f'<h3 class="section-header">Individual Stock Analysis</h3>', unsafe_allow_html=True)
+    st.markdown(f'<h3 class="section-header">Stock Analysis</h3>', unsafe_allow_html=True)
+    st.caption("Compare selected stocks' performance over time. Use 'Actual Price' for raw values or 'Normalized Price' to start all stocks at 100% for relative growth comparison.")
     col_1, col_2 = st.columns([1, 3], border=True)
     with col_1:
         stocks = Helpers.get_all_stocks()
@@ -100,28 +109,27 @@ with tab1:
         if len(selected_stocks) >= 1:
             stock_history = Helpers.get_stock_price_history(selected_stocks, days=days)
 
-            stock_history = stock_history[["symbol","price_date","close_price"]]
+            stock_history = stock_history[["symbol","price_date","adjusted_close"]]
 
             # normalize prices for comparison
             for stock in stock_history["symbol"].unique():
-                stock_history.loc[stock_history["symbol"] == stock, "normalized_price"] = stock_history.loc[stock_history["symbol"] == stock, "close_price"] / stock_history.loc[stock_history["symbol"] == stock, "close_price"].iloc[0] 
-
+                stock_history.loc[stock_history["symbol"] == stock, "normalized_price"] = stock_history.loc[stock_history["symbol"] == stock, "adjusted_close"] / stock_history.loc[stock_history["symbol"] == stock, "adjusted_close"].iloc[0] 
             # plot price history
             if price_adjustment == "Actual Price":
-                fig = px.line(stock_history, x="price_date", y="close_price", title=f"Price History for {selected_stocks}", color="symbol")
+                fig = px.line(stock_history, x="price_date", y="adjusted_close", title=f"Price History for {selected_stocks}", color="symbol", color_discrete_sequence=dashboard_colors)
             else:
-                fig = px.line(stock_history, x="price_date", y="normalized_price", title=f"Price History for {selected_stocks}", color="symbol")
+                fig = px.line(stock_history, x="price_date", y="normalized_price", title=f"Price History for {selected_stocks}", color="symbol", color_discrete_sequence=dashboard_colors)
             
             # Apply consistent styling
             fig.update_layout(
-                legend_title_text='Stocks',
+                legend_title_text='Stock',
                 xaxis_title='Date',
                 yaxis_title='Price' if price_adjustment == "Actual Price" else 'Normalized Price',
                 template='plotly_dark',
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
                 font=dict(color='white'),
-                title_font=dict(color=PRIMARY, size=18),
+                title_font=dict(size=18),
                 legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
             )
             fig.update_traces(line=dict(width=2))
@@ -133,7 +141,9 @@ with tab1:
         else:
             st.info("Please select at least one stock to analyze.")
     st.divider()
-    st.markdown(f'<h3 class="section-header">What\'s Happening in the Market?</h3>', unsafe_allow_html=True)
+    st.markdown(f'<h3 class="section-header">What\'s Happening in the Market?</h3>'
+    , unsafe_allow_html=True)
+    st.caption("Compare key market indices, commodities, and volatility to understand the broader market context in which your stocks are operating. Current values and percentages changed over time are based off of live data pulled from Yahoo Finance.")
     
     # time period
     period = st.selectbox("Select time period for market analysis:", ["1 day", "5 day", "1 month", "3 month", "6 month", "1 year"], index=2)
@@ -141,15 +151,15 @@ with tab1:
     if "week" in period:
         days = 7
     elif "month" in period:
-        days = int(period.replace("month", "")) * 30
+        days = int(period.replace("month", "")) * 31
     elif "year" in period:
         days = int(period.replace("year", "")) * 365
     elif "day" in period:
         days = int(period.replace(" day", ""))
 
     # Get stock history for all indices
-    history = Helpers.get_stock_price_history(["^GSPC", "^DJI", "^IXIC"], days=days)
-    stock_history = history[["symbol","price_date","close_price"]]
+    history = Helpers.get_stock_price_history(["^GSPC", "^DJI", "^IXIC", "GC=F", "SI=F", "^VIX", "^TNX"], days=days)
+    stock_history = history[["symbol","price_date","adjusted_close"]]
 
     # Market indices configuration
     indices = [
@@ -163,38 +173,22 @@ with tab1:
 
     cols = st.columns([1, 1, 1], border=True)
     
-    for idx, index_info in enumerate(indices):
-        with cols[idx]:
-            st.badge(index_info["name"], color=index_info["badge_color"])
-            st.caption(index_info["description"])
-            
-            # Filter history for this index
-            index_history = stock_history[stock_history["symbol"] == index_info["symbol"]]
-            
-            # Create and style chart
-            fig = px.line(index_history, x="price_date", y="close_price", color_discrete_sequence=[index_info["color"]])
-            fig.update_layout(
-                xaxis_title='Date',
-                yaxis_title='Price',
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color='white'),
-                legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
-            )
+    Helpers.plot_market_indices(stock_history, cols, indices, dashboard_colors)
 
+    cols = st.columns([1, 1, 1], border=True)
 
-            # Calculate and display metric with percentage change over the selected period
-            live_price = Helpers.get_current_live_price(index_info["symbol"])
-            if live_price and not index_history.empty:
-                current_price = round(live_price['current_price'], 2)
-                first_price = index_history['close_price'].iloc[0]  # First price in the period
-                pct_change = np.round((current_price - first_price) / first_price * 100, 2)
-                st.metric(label=f"{index_info['name']} Current Value", value=current_price, delta=f"{pct_change}%")
-            else:
-                st.metric(label=f"{index_info['name']} Current Value", value="N/A")
-            
-            st.plotly_chart(fig, width='content')
+# gold/silver, VIX, and treasury yield 
+    indices = [
+        {"symbol": ["GC=F", "SI=F"], "name": "Gold/Silver", "color": PRIMARY, "badge_color": "yellow",
+         "description": "Gold and Silver futures prices for precious metals tracking"},
+        {"symbol": "^VIX", "name": "VIX", "color": ACCENT_INDIGO, "badge_color": "orange",
+         "description": "CBOE Volatility Index (market fear gauge)"},
+        {"symbol": "^TNX", "name": "10Y Treasury", "color": ACCENT_GREEN, "badge_color": "green",
+         "description": "10-Year U.S. Treasury yield (interest rate benchmark)"}
+    ]
+
+    Helpers.plot_market_indices(stock_history, cols, indices, dashboard_colors)
+
 
 with tab2:
     # Initialize session state for login
@@ -296,7 +290,7 @@ with tab3:
     st.markdown(f'<h3 class="section-header">Update All Stock Prices</h3>', unsafe_allow_html=True)
     col1 = st.columns([3])
     with col1[0]:
-        period = st.text_input("Select period for price update (e.g., '1d', '5d', '1mo'):", value="max")
+        period = st.selectbox("Select time period for price update:", ["1d", "7d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"], index=2)
     
     if st.button("Update Prices"):
         try:

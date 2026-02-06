@@ -1,3 +1,5 @@
+from matplotlib.pylab import indices
+from numpy import indices
 from nicegui import ui
 import yfinance as yf
 import supabase
@@ -6,6 +8,8 @@ from st_supabase_connection import SupabaseConnection
 import datetime 
 from datetime import datetime, timedelta, date
 import pandas as pd
+import numpy as np
+import plotly.express as px
 
 # connect to supabase
 @st.cache_resource(ttl="10m")
@@ -41,12 +45,14 @@ def add_stock_to_db(symbol, is_benchmark=False):
         return
 
     # Stricter validation: Check if info is empty or missing key fields
-    if not info or not info.get('longName'):
+    # For futures, longName might not exist, so check for shortName or displayName
+    company_name = info.get('longName') or info.get('shortName') or info.get('displayName')
+    if not info or not company_name:
         raise ValueError(f"Invalid ticker symbol: '{symbol}'. Please enter a valid symbol (e.g., 'AAPL').")
     
     stock_data = {
         'symbol': symbol.upper(),
-        'company_name': info.get('longName', ''),
+        'company_name': company_name,
         'exchange': info.get('exchange', ''),
         'sector': info.get('sector', ''),
         'industry': info.get('industry', ''),
@@ -125,7 +131,7 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
             'high_price': float(row['High']),
             'low_price': float(row['Low']),
             'close_price': float(row['Close']),
-            'adjusted_close': float(row['Close']),
+            'adjusted_close': float(row['Adj Close']),
             'volume': int(row['Volume'])
         })
     
@@ -201,7 +207,7 @@ def get_price_comparison(symbol):
     
     result = {
         'symbol': symbol,
-        'latest_db_price': float(latest_db['close_price']) if latest_db else None,
+        'latest_db_price': float(latest_db['adjusted_close']) if latest_db else None,
         'latest_db_date': latest_db['price_date'] if latest_db else None,
         'current_price': current_live['current_price'],
         'difference': None,
@@ -210,7 +216,7 @@ def get_price_comparison(symbol):
     }
     
     if latest_db:
-        db_price = float(latest_db['close_price'])
+        db_price = float(latest_db['adjusted_close'])
         result['difference'] = current_live['current_price'] - db_price
         result['percent_change'] = ((current_live['current_price'] - db_price) / db_price) * 100
         
@@ -251,7 +257,7 @@ def get_stock_price_history(symbols, days=30):
         
         while True:
             prices = supabase.table('stock_prices')\
-                .select('stock_id, price_date, close_price')\
+                .select('stock_id, price_date, adjusted_close')\
                 .eq('stock_id', stock_id)\
                 .gte('price_date', start_date)\
                 .order('price_date', desc=False)\
@@ -356,3 +362,65 @@ def get_current_positions():
             })
     
     return pd.DataFrame(positions)
+
+# plot markets
+def plot_market_indices(stock_history, cols, indices, dashboard_colors):
+    for idx, index_info in enumerate(indices):
+        with cols[idx]:
+            st.badge(index_info["name"], color=index_info["badge_color"])
+            st.caption(index_info["description"])
+            
+            # Handle single or multiple symbols
+            if isinstance(index_info["symbol"], list):
+                # Multiple symbols (e.g., Gold/Silver) - add dropdown to select one
+                if index_info["name"] == "Gold/Silver":
+                    selected_metal = st.selectbox("Select Metal:", ["Gold", "Silver"], key=f"metal_select_{idx}")
+                    symbol_map = {"Gold": "GC=F", "Silver": "SI=F"}
+                    selected_symbol = symbol_map[selected_metal]
+                    index_history = stock_history[stock_history["symbol"] == selected_symbol]
+                    fig = px.line(index_history, x="price_date", y="adjusted_close", color_discrete_sequence=["#FFBF00" if selected_metal == "Gold" else "#C0C0C0"])
+                    metric_symbol = selected_symbol
+                    display_name = f"{selected_metal} Futures"
+                else:
+                    # Other multi-symbol cases (if any)
+                    index_history = stock_history[stock_history["symbol"].isin(index_info["symbol"])]
+                    fig = px.line(index_history, x="price_date", y="adjusted_close", color="symbol", color_discrete_sequence=dashboard_colors)
+                    metric_symbol = index_info["symbol"][0]
+                    display_name = index_info["name"]
+            else:
+                # Single symbol
+                index_history = stock_history[stock_history["symbol"] == index_info["symbol"]]
+                fig = px.line(index_history, x="price_date", y="adjusted_close", color_discrete_sequence=[index_info["color"]])
+                metric_symbol = index_info["symbol"]
+                display_name = index_info["name"]
+            
+            # Apply consistent styling
+            fig.update_layout(
+                xaxis_title='Date',
+                yaxis_title='Yield (%)' if metric_symbol == '^TNX' else 'Price',
+                template='plotly_dark',
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),
+                legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
+            )
+            fig.update_traces(line=dict(width=2))
+            fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
+            fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
+
+            # Calculate and display metric with percentage change over the selected period
+            live_price = get_current_live_price(metric_symbol)
+            if live_price and not index_history.empty:
+                current_price = round(live_price['current_price'], 2)
+                # Filter history for the metric symbol
+                metric_history = index_history[index_history["symbol"] == metric_symbol]
+                if not metric_history.empty:
+                    first_price = metric_history['adjusted_close'].iloc[0]
+                    pct_change = np.round((current_price - first_price) / first_price * 100, 2)
+                    st.metric(label=f"{display_name} Current Value", value=current_price, delta=f"{pct_change}%")
+                else:
+                    st.metric(label=f"{display_name} Current Value", value=current_price)
+            else:
+                st.metric(label=f"{display_name} Current Value", value="N/A")
+            
+            st.plotly_chart(fig, width='content')
