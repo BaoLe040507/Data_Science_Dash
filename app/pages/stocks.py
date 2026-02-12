@@ -82,7 +82,7 @@ st.markdown(
 
 
 
-tab1, tab2, tab3 = st.tabs(["📊 Stock and Market Analysis", "➕ Add Position", "🔄 Update Prices"])
+tab1, tab2, tab3, tab4 = st.tabs([":material/candlestick_chart: Stock and Market Analysis",":material/home: Can You Retire?", ":material/add: Add Position", ":material/update: Update Prices"])
 with tab1:
     st.markdown(f'<h3 class="section-header">Stock Analysis</h3>', unsafe_allow_html=True)
     st.caption("Compare selected stocks' performance over time. Use 'Actual Price' for raw values or 'Normalized Price' to start all stocks at 100% for relative growth comparison.")
@@ -96,7 +96,7 @@ with tab1:
         selected_stocks = st.multiselect("Select stocks to analyze:", stock_options)
 
         price_adjustment = st.selectbox("Price Adjustment:", ["Actual Price", "Normalized Price"], index=0)
-        time_period = st.selectbox("Select time period:", ["1 week", "1 month", "3 month", "6 month", "1 year", "2 year", "5 year", "10 year", "15 year"], index=7)
+        time_period = st.selectbox("Select time period:", ["1 week", "1 month", "3 month", "6 month", "1 year", "2 year", "5 year", "10 year", "15 year"], index=3)
     with col_2:
         st.markdown("#### Stock Price History")
         # get the time period in days
@@ -132,11 +132,12 @@ with tab1:
                 font=dict(color='white'),
                 title_font=dict(size=18),
                 legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
+                hovermode='x unified'
             )
             fig.update_traces(line=dict(width=2))
             fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
             fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
-            st.plotly_chart(fig, width='content')
+            st.plotly_chart(fig, width='content', height=400, use_container_width=True)
 
             
         else:
@@ -282,9 +283,9 @@ with tab1:
 
 # gold/silver, VIX, and treasury yield 
     indices = [
-        {"symbol": ["GC=F", "SI=F"], "name": "Gold/Silver", "color": PRIMARY, "badge_color": "yellow",
+        {"symbol": ["GC=F", "SI=F"], "name": "Gold/Silver", "color": "#FFD700", "badge_color": "yellow",
          "description": "Gold and Silver futures prices for precious metals tracking"},
-        {"symbol": "^VIX", "name": "VIX", "color": ACCENT_INDIGO, "badge_color": "orange",
+        {"symbol": "^VIX", "name": "VIX", "color": "#de9312", "badge_color": "orange",
          "description": "CBOE Volatility Index (market fear gauge)"},
         {"symbol": "^TNX", "name": "10Y Treasury", "color": ACCENT_GREEN, "badge_color": "green",
          "description": "10-Year U.S. Treasury yield (interest rate benchmark)"}
@@ -292,8 +293,206 @@ with tab1:
 
     Helpers.plot_market_indices(stock_history, cols, indices, dashboard_colors)
 
-
 with tab2:
+        st.write("#### Can You Retire? Let's Find Out.")
+        st.caption("Find out your expected financial position at retirement based on your current savings, expected expenses, and investment growth assumptions. This is a simplified model and should be used for illustrative purposes only.")
+
+        retirement_accounts = ["Roth IRA", "Pre-Tax 401(k)"]
+        selection = st.pills("Select Retirement Account Type:", retirement_accounts)
+        st.badge(f"You selected: {selection}", color = "violet")
+
+    # personal inputs and timeline
+        cols = st.columns([1,3], border=True)
+        submitted = False  # Initialize submitted variable
+        with cols[0]:
+            if selection == "Roth IRA":
+                with st.form("personal_inputs"):
+
+                    current_age = st.number_input(
+                        "Current Age", min_value=0, max_value=100, value=30
+                    )
+
+                    target_retirement_age = st.number_input(
+                        "Target Retirement Age", min_value=0, max_value=100, value=65
+                    )
+
+                    years_in_retirement = st.number_input(
+                        "Expected Years in Retirement", min_value=0, max_value=50, value=20
+                    )
+
+                    annual_contribution = st.number_input(
+                        "Annual Contribution ($)", min_value=0, value=7500
+                    )
+                    st.info(
+                        "Current Roth IRA contribution limit is \\$7,500/year (\\$8,500 if age 50+)"
+                    )
+
+                    return_rate = st.number_input(
+                        "Expected Annual Return Rate (%)", min_value=0.0, value=7.0, step=0.5
+                    )
+                    st.info(
+                        "Historical average stock market return is around 7% after adjusting for inflation"
+                    )
+
+                    current_balance = st.number_input(
+                        "Current Account Balance ($)", min_value=0.0, value=0.0
+                    )
+
+                    withdrawal_rate = st.number_input(
+                        "Expected Annual Withdrawal Rate in Retirement (%)",
+                        min_value=0.0,
+                        value=4.0
+                    )
+                    st.info(
+                        "The 4% rule is a common guideline for sustainable withdrawals in retirement"
+                    )
+
+                    desired_income = st.number_input(
+                        "Desired Annual Income in Retirement ($)", min_value=0.0, value=50000.0, step=5000.0
+                    )
+
+                    # ─────────────────────────────
+                    # Derived values
+                    # ─────────────────────────────
+
+                    years_until_retirement = max(
+                        target_retirement_age - current_age, 0
+                    )
+
+                    r = return_rate / 100
+                    w = withdrawal_rate / 100
+
+                    total_contributions = annual_contribution * years_until_retirement
+
+                    # ─────────────────────────────
+                    # Roth IRA calculations
+                    # ─────────────────────────────
+
+                    # 1️⃣ Grow current balance (lump sum)
+                    future_current_balance = Helpers.get_future_value(
+                        current_balance, r, years_until_retirement
+                    )
+
+                    # 2️⃣ Grow annual contributions (annuity)
+                    if r > 0:
+                        future_contributions = (
+                            annual_contribution * ((1 + r) ** years_until_retirement - 1) / r
+                        )
+                    else:
+                        future_contributions = total_contributions
+
+                    # 3️⃣ Total Roth balance at retirement
+                    roth_balance_at_retirement = (
+                        future_current_balance + future_contributions
+                    )
+
+                    # 4️⃣ Tax-free growth
+                    tax_free_growth = (
+                        roth_balance_at_retirement
+                        - current_balance
+                        - total_contributions
+                    )
+
+                    # 5️⃣ Estimated annual tax-free income in retirement
+                    tax_free_income = roth_balance_at_retirement * w
+
+                    submitted = st.form_submit_button("Submit")
+    
+        with cols[1]:
+            if submitted and selection == "Roth IRA":
+
+                current_year = pd.Timestamp.now().year
+                years = []
+                balances = []
+                HYSA_balances = []
+
+                balance = current_balance
+                hysa_balance = current_balance  # Separate variable for HYSA tracking
+                r = return_rate / 100
+                hysa_r = 3 / 100  # Assume 3% for HYSA
+
+                # Start at current year with initial balance
+                years.append(current_year)
+                balances.append(current_balance)
+                HYSA_balances.append(current_balance)
+
+                for i in range(1, years_until_retirement + 1):
+                    year = current_year + i
+                    years.append(year)
+
+                    # Grow existing balance
+                    balance *= (1 + r)
+                    hysa_balance *= (1 + hysa_r)
+
+                    # Add annual contribution at end of year
+                    balance += annual_contribution
+                    hysa_balance += annual_contribution
+
+                    balances.append(balance)
+                    HYSA_balances.append(hysa_balance)
+
+                roth_projection_df = pd.DataFrame({
+                    "Year": years,
+                    "Projected Roth IRA Balance": balances,
+                    "HYSA Balance": HYSA_balances
+                })
+
+                fig = px.line(
+                    roth_projection_df,
+                    x="Year",
+                    y=["Projected Roth IRA Balance", "HYSA Balance"],
+                    title="Roth IRA Growth Projection",
+                    color_discrete_sequence=[PRIMARY, ACCENT_GREEN],
+                    markers=True
+                )
+                
+                # Format y-axis with dollar signs and hover with 2 decimals
+                fig.update_layout(
+                    yaxis_tickprefix="$",
+                    yaxis_tickformat=",.0f",
+                    hovermode="x unified",
+                    legend=dict(
+                        title="Accounts",
+                        orientation="h",
+                        yanchor="top",
+                        y=-0.15,
+                        xanchor="center",
+                        x=0.1
+                    )
+                )
+                fig.update_traces(
+                    hovertemplate="$%{y:,.2f}<extra></extra>"
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+                
+                st.divider()
+                st.markdown("### Summary at Retirement")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Roth Balance", f"${roth_balance_at_retirement:,.0f}", border=True)
+                with col2:
+                    st.metric("Tax-Free Growth", f"${tax_free_growth:,.0f}", border=True)
+                with col3:
+                    st.metric("Contributions Total", f"${total_contributions:,.0f}", border=True)
+                with col4:
+                    st.metric("Est. Annual Tax-Free Income", f"${tax_free_income:,.0f}", border=True)
+
+                if tax_free_income >= desired_income:
+                    st.success("Congratulations! Based on your inputs, you are on track to meet or exceed your desired annual income in retirement.")
+                else:
+                    st.warning("Based on your inputs, you may need to adjust your savings or investment strategy to meet your desired annual income in retirement.")
+                    # Calculate the total balance needed to generate desired income
+                    desired_balance_at_retirement = desired_income / w
+                    # Calculate the balance shortfall
+                    balance_shortfall = desired_balance_at_retirement - roth_balance_at_retirement
+                    # Calculate additional annual contribution needed using future value of annuity formula
+                    if r > 0:
+                        additional_contribution = balance_shortfall / (((1 + r) ** years_until_retirement - 1) / r)
+                    else:
+                        additional_contribution = balance_shortfall / years_until_retirement if years_until_retirement > 0 else 0
+                    st.markdown(f"To cover the shortfall, consider increasing your annual contribution by approximately :green[${additional_contribution:,.0f}].")
+with tab3:  
     # Initialize session state for login
     if "logged_in" not in st.session_state:
         st.session_state["logged_in"] = False
@@ -389,7 +588,7 @@ with tab2:
             st.session_state["logged_in"] = False
             st.rerun()
 
-with tab3:
+with tab4:
     st.markdown(f'<h3 class="section-header">Update All Stock Prices</h3>', unsafe_allow_html=True)
     col1 = st.columns([3])
     with col1[0]:

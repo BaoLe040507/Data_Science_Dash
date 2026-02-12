@@ -1,5 +1,4 @@
-from matplotlib.pylab import indices
-from numpy import indices
+
 from nicegui import ui
 import yfinance as yf
 import supabase
@@ -201,18 +200,41 @@ def update_stock_prices(symbol, period=None, interval="1d", force_refresh=False)
             'volume': int(row['Volume'])
         })
     
-    # Upsert into database
+    # Upsert into database in batches for better performance
     if prices:
-        result = supabase.table('stock_prices').upsert(
-            prices,
-            on_conflict='stock_id,price_date'
-        ).execute()
-        st.success(f"✅ Updated {len(prices)} price records for {symbol}")
+        batch_size = 1000  # Optimal batch size for Supabase
+        total_prices = len(prices)
+        
+        # Use progress bar for large datasets
+        if total_prices > batch_size:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+        
+        for i in range(0, total_prices, batch_size):
+            batch = prices[i:i + batch_size]
+            supabase.table('stock_prices').upsert(
+                batch,
+                on_conflict='stock_id,price_date'
+            ).execute()
+            
+            # Update progress for large datasets
+            if total_prices > batch_size:
+                progress = min(i + batch_size, total_prices)
+                progress_pct = progress / total_prices
+                progress_bar.progress(progress_pct)
+                status_text.text(f"Upserting: {progress}/{total_prices} records")
+        
+        # Clear progress indicators
+        if total_prices > batch_size:
+            progress_bar.empty()
+            status_text.empty()
+        
+        st.success(f"✅ Updated {total_prices} price records for {symbol}")
         update_stock_financials(ticker, stock_id, symbol)
         get_latest_price_from_db.clear()
         get_stock_price_history.clear()
         get_current_positions.clear()
-        return result.data
+        return prices
     
     # Also Update financials even if no new prices
     update_stock_financials(ticker, stock_id, symbol)
@@ -493,6 +515,7 @@ def plot_market_indices(stock_history, cols, indices, dashboard_colors):
                 font=dict(color='white'),
                 legend=dict(bgcolor='rgba(255,255,255,0.04)', bordercolor='rgba(255,255,255,0.08)'),
                 height=300,  # Reduce chart height
+                hovermode='x unified'
             )
             fig.update_traces(line=dict(width=2))
             fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.08)')
@@ -514,3 +537,7 @@ def plot_market_indices(stock_history, cols, indices, dashboard_colors):
                 st.metric(label=f"{display_name} Current Value", value="N/A")
             
             st.plotly_chart(fig, width='content')
+
+def get_future_value(present_value, annual_rate, years):
+    """Calculate future value of an investment"""
+    return present_value * (1 + annual_rate) ** years

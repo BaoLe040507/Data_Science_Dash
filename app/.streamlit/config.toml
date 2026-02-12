@@ -1,0 +1,5 @@
+[theme]
+base = "dark"                     # "light" or "dark"
+font = "san serif"                # sans serif | serif | monospace
+showSidebarBorder = true
+

@@ -3,8 +3,8 @@ import streamlit as st
 
 
 pages = [
-    st.Page("pages/home.py", title="Home", icon="🏠"),
-    st.Page("pages/stocks.py", title="Stocks Dashboard", icon="📈")
+    st.Page("pages/home.py", title="Home", icon=":material/home:"),
+    st.Page("pages/stocks.py", title="Stocks Dashboard", icon=":material/trending_up:")
 ]
 
 logo_path = Path(__file__).parent / "assets" / "data-science.png"
